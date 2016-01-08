@@ -781,31 +781,16 @@ Class Mongo_db{
 			show_error("In order to retrieve documents from MongoDB, a collection name must be passed", 500);
 		}
 		try{	
-                        $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>2];
-                        $collection = new MongoDB\Collection($this->connect, $this->config[$this->activate]['database'].".".$collection); //$this->db->selectCollection($collection);
-                        $documents = $collection
-			->find($this->wheres, $options);
-//			->limit((int) $this->limit)
-//			->skip((int) $this->offset)
-//			->sort($this->sorts);
-
-                        //$this->explain($documents, $collection);
+                        $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>1];
+                        $mongodbCollection = new MongoDB\Collection($this->connect, $this->config[$this->activate]['database'].".".$collection); 
+                        $documents = $mongodbCollection
+                                ->find($this->wheres, $options);
 			
                         // Clear
 			$this->_clear();
 			$returns = $documents->toArray();
-//			while ($documents->hasNext())
-//			{
-//				if ($this->return_as == 'object')
-//				{
-//					$returns[] = (object) $documents->getNext();	
-//				}
-//				else
-//				{
-//					$returns[] = (array) $documents->getNext();
-//				}
-//			}
-			if ($this->return_as == 'object')
+
+                        if ($this->return_as == 'object')
 			{
 				return (object)$returns;
 			}
@@ -915,7 +900,8 @@ Class Mongo_db{
 		{
 			show_error("In order to retrieve a count of documents from MongoDB, a collection name must be passed", 500);
 		}
-		$count = $this->db->selectCollection($collection)->find($this->wheres)->limit((int) $this->limit)->skip((int) $this->offset)->count();
+                $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>1];
+		$count = $this->db->selectCollection($collection)->find($this->wheres, $options)->count();
 		$this->_clear();
 		return ($count);
 	}
