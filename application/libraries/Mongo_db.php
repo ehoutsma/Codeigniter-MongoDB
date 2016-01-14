@@ -231,9 +231,8 @@ Class Mongo_db{
                         }
 			$this->connect = new MongoDB\Driver\Manager($dsn, $options);
 			$this->db = new MongoDB\Database($this->connect, $this->database);
-                        $this->db->selectCollection("session")->find();
 		}
-		catch (MongoConnectionException $e)
+		catch (Exception $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -279,7 +278,7 @@ Class Mongo_db{
 				return (FALSE);
 			}
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -313,7 +312,7 @@ Class Mongo_db{
 		}
 		try
 		{
-			$this->db->selectCollection($collection)->batchInsert($insert, array('w' => $this->write_concerns, 'j'=>$this->journal));
+			$this->db->selectCollection($collection)->insertMany($insert, array('w' => $this->write_concerns, 'j'=>$this->journal));
 			if (isset($insert['_id']))
 			{
 				return ($insert['_id']);
@@ -323,7 +322,7 @@ Class Mongo_db{
 				return (FALSE);
 			}
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -761,7 +760,7 @@ Class Mongo_db{
 			$value .= "$";
 		}
 		$regex = "/$value/$flags";
-		$this->wheres[$field] = new MongoRegex($regex);
+		$this->wheres[$field] = new MongoDB\BSON\Regex($value, $flags);
 		return ($this);
 	}
 
@@ -781,16 +780,18 @@ Class Mongo_db{
 			show_error("In order to retrieve documents from MongoDB, a collection name must be passed", 500);
 		}
 		try{	
-                        $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>1];
-                        $mongodbCollection = new MongoDB\Collection($this->connect, $this->config[$this->activate]['database'].".".$collection); 
-                        $documents = $mongodbCollection
-                                ->find($this->wheres, $options);
+                        $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>2, ['projection'=>$this->selects]];
+                        $collection = new MongoDB\Collection($this->connect, $this->config[$this->activate]['database'].".".$collection); //$this->db->selectCollection($collection);
+                        $documents = $collection
+			->find($this->wheres, $options);
+
+                        $this->explain($documents, $collection);
 			
                         // Clear
 			$this->_clear();
 			$returns = $documents->toArray();
 
-                        if ($this->return_as == 'object')
+			if ($this->return_as == 'object')
 			{
 				return (object)$returns;
 			}
@@ -799,7 +800,7 @@ Class Mongo_db{
 				return $returns;
 			}
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -853,7 +854,7 @@ Class Mongo_db{
 
 		try{
 
-			$document = $this->db->selectCollection($collection)->findOne($this->wheres, $this->selects);
+			$document = $this->db->selectCollection($collection)->findOne($this->wheres, ['projection'=>$this->selects]);
 			// Clear
 			$this->_clear();
 			if(is_null($document))
@@ -872,7 +873,7 @@ Class Mongo_db{
 				}
 			}
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -900,8 +901,8 @@ Class Mongo_db{
 		{
 			show_error("In order to retrieve a count of documents from MongoDB, a collection name must be passed", 500);
 		}
-                $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>1];
-		$count = $this->db->selectCollection($collection)->find($this->wheres, $options)->count();
+                $options = ['limit'=>(int) $this->limit, 'skip'=>(int) $this->offset, 'sort'=>$this->sorts, 'batchSize'=>(int)$this->limit, 'cursorType'=>2];
+		$count = $this->db->selectCollection($collection)->count($this->wheres, $options); //->limit((int) $this->limit)->skip((int) $this->offset)
 		$this->_clear();
 		return ($count);
 	}
@@ -929,7 +930,9 @@ Class Mongo_db{
 			{
 			$this->updates['$set'][$field] = $value;
 			}
-		}
+		} else
+			show_error("In order to set a value you need to pass a string or an array to the fields parameter", 500);
+                    
 		return $this;
 	}
 
@@ -956,7 +959,8 @@ Class Mongo_db{
 			{
 				$this->updates['$unset'][$field] = 1;
 			}
-		}
+		} else
+			show_error("In order to unset a field you need to pass a string or an array to the fields parameter", 500);
 		return $this;
 	}
 
@@ -980,7 +984,8 @@ Class Mongo_db{
 		elseif (is_array($values))
 		{
 			$this->updates['$addToSet'][$field] = array('$each' => $values);
-		}
+		} else
+			show_error("In order to add a value to a set you need to pass a string or an array to the fields parameter", 500);
 		return $this;
 	}
 
@@ -1007,7 +1012,8 @@ Class Mongo_db{
 			{
 				$this->updates['$push'][$field] = $value;
 			}
-		}
+		} else
+			show_error("To push a value to an array, you need to pass a string or an array to the field parameter", 500);
 		return $this;
 	}
 
@@ -1034,7 +1040,8 @@ Class Mongo_db{
 			{
 				$this->updates['$pop'][$pop_field] = -1;
 			}
-		}
+		} else
+			show_error("To pop a value from an array, you need to pass a string or an array to the field parameter", 500);
 		return $this;
 	}
 
@@ -1049,6 +1056,11 @@ Class Mongo_db{
 	*/
 	public function pull($field = "", $value = array())
 	{
+                if (empty($field))
+                    show_error("To pull a value from an array, you need to pass a string or an array to the field parameter", 500);
+                if (empty($value))
+                    show_error("To pull a value from an array, you need to pass a string or an array to the value parameter", 500);
+
 		$this->_u('$pull');
 		$this->updates['$pull'] = array($field => $value);
 		return $this;
@@ -1065,7 +1077,12 @@ Class Mongo_db{
 	*/
 	public function rename_field($old, $new)
 	{
-		$this->_u('$rename');
+                if (empty($old))
+                    show_error("To rename a field, you need to add the name of the old field.", 500);
+                if (empty($new))
+                    show_error("To rename a field, you need to add the name of the new field.", 500);
+
+                $this->_u('$rename');
 		$this->updates['$rename'] = array($old => $new);
 		return $this;
 	}
@@ -1092,7 +1109,8 @@ Class Mongo_db{
 			{
 				$this->updates['$inc'][$field] = $value;
 			}
-		}
+		} else
+			show_error("To increase the value of field, you need to pass a string or an array to the field parameter", 500);
 		return $this;
 	}
 
@@ -1208,7 +1226,7 @@ Class Mongo_db{
 				return $documents;
 			}
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1244,7 +1262,7 @@ Class Mongo_db{
 			$this->_clear();
 			return (TRUE);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1287,7 +1305,7 @@ Class Mongo_db{
 			$this->_clear();
 			return (TRUE);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1321,7 +1339,7 @@ Class Mongo_db{
 			$this->_clear();
 			return (TRUE);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1360,7 +1378,7 @@ Class Mongo_db{
 			$this->_clear();
 			return (TRUE);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\BulkWriteException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1461,11 +1479,11 @@ Class Mongo_db{
 	{
 		if ( $stamp == FALSE )
 		{
-			return new MongoDate();
+			return new MongoDB\BSON\UTCDateTime((int)time()*1000);
 		}
 		else
 		{
-			return new MongoDate($stamp);
+			return new MongoDB\BSON\UTCDateTime($stamp);
 		}
 		
 	}
@@ -1558,7 +1576,7 @@ Class Mongo_db{
 			$this->_clear();
 			return ($this);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\RuntimeException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1576,11 +1594,9 @@ Class Mongo_db{
 	* Remove index
 	* --------------------------------------------------------------------------------
 	*
-	* Remove an index of the keys in a collection. To set values to descending order,
-	* you must pass values of either -1, FALSE, 'desc', or 'DESC', else they will be
-	* set to 1 (ASC).
+	* Remove an index of the keys in a collection. 
 	*
-	* @usage : $this->mongo_db->remove_index($collection, array('first_name' => 'ASC', 'last_name' => -1));
+	* @usage : $this->mongo_db->remove_index($collection, array('first_name', 'last_name'));
 	*/
 	public function remove_index($collection = "", $keys = array())
 	{
@@ -1596,11 +1612,13 @@ Class Mongo_db{
 
 		try
 		{	
-			$this->db->selectCollection($collection)->deleteIndex($keys, $options);
-			$this->_clear();
-			return ($this);
+                    foreach ($keys as $key) {
+                        $this->db->selectCollection($collection)->dropIndex($key);
+                        $this->_clear();
+                    }
+                    return ($this);
 		}
-		catch (MongoCursorException $e)
+		catch (MongoDB\Driver\Exception\RuntimeException $e)
 		{
 			if(isset($this->debug) == TRUE && $this->debug == TRUE)
 			{
@@ -1628,7 +1646,7 @@ Class Mongo_db{
 		{
 			show_error("No Mongo collection specified to remove all indexes from", 500);
 		}
-		return ($this->db->selectCollection($collection)->getIndexInfo());
+		return ($this->db->selectCollection($collection)->listIndexes());
 	}	
 
 	/**
@@ -1651,7 +1669,7 @@ Class Mongo_db{
 
 		try
 		{
-			$this->db = $this->connect->{$this->database};
+			$this->db = new MongoDB\Database($this->connect, $this->database);
 			return (TRUE);
 		}
 		catch (Exception $e)
@@ -1677,7 +1695,7 @@ Class Mongo_db{
 
 		try
 		{
-			$this->connect->{$database}->drop();
+			$this->db->drop();
 			return (TRUE);
 		}
 		catch (Exception $e)
@@ -1694,21 +1712,21 @@ Class Mongo_db{
 	* Drop a Mongo collection
 	* @usage: $this->mongo_db->drop_collection('bar');
 	*/
-	public function drop_collection($col = '')
+	public function drop_collection($collection = '')
 	{
-		if (empty($col))
+		if (empty($collection))
 		{
 			show_error('Failed to drop MongoDB collection because collection name is empty', 500);
 		}
 
 		try
 		{
-			$this->db->{$col}->drop();
+			$this->db->selectCollection($collection)->drop();
 			return TRUE;
 		}
 		catch (Exception $e)
 		{
-			show_error("Unable to drop Mongo collection `{$col}`: {$e->getMessage()}", 500);
+			show_error("Unable to drop Mongo collection `{$collection}`: {$e->getMessage()}", 500);
 		}
 	}
 
